@@ -1,24 +1,74 @@
 extern crate chrono;
 extern crate sha2;
 extern crate byteorder;
+extern crate iron;
+extern crate router;
+extern crate persistent;
 
 use std::mem;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::RwLock;
 use chrono::prelude::*;
 use sha2::{Sha256, Digest};
 use byteorder::{BigEndian, WriteBytesExt};
+use iron::prelude::*;
+use iron::status;
+use router::Router;
+use iron::typemap::Key;
+use persistent::State;
 
 fn main() {
-    let mut bc = new_blockchain();
+    let mut router = Router::new();
 
-    // new block
-    bc.new_transaction("me", "you", 5);
-    bc.new_transaction("you", "me", 2);
-    let proof = Blockchain::proof_of_work(bc.last_block().proof);
-    bc.new_block(proof, None);
+    router.get("/", index, "index");
+    router.get("/mine", mine, "mine");
+    router.post("/transactions/new", transactions_new, "transactions_new");
+    router.get("/chain", chain, "chain");
 
-    println!("{:?}", bc);
+    let mut c = Chain::new(router);
+    c.link(State::<Blockchain>::both(RwLock::new(new_blockchain())));
+
+    Iron::new(c).http("localhost:3000").unwrap();
+
+    // handler definitions
+
+    fn index(_: &mut Request) -> IronResult<Response> {
+        Ok(Response::with(
+            (status::Ok, "Welcome to the Blockchain server!\n"),
+        ))
+    }
+    fn mine(req: &mut Request) -> IronResult<Response> {
+        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let mut bc = arc_rw_lock.write().unwrap();
+        let proof = Blockchain::proof_of_work(bc.last_block().proof);
+        bc.new_block(proof, None);
+        // TODO: Transform the response to JSON.
+        Ok(Response::with((
+            status::Ok,
+            format!("Mined a new block: {:?}\n", bc.last_block()),
+        )))
+    }
+    fn transactions_new(req: &mut Request) -> IronResult<Response> {
+        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let mut bc = arc_rw_lock.write().unwrap();
+        // TODO: Extract these from the request.
+        bc.new_transaction("me", "you", 5);
+        // TODO: Transform the response to JSON.
+        Ok(Response::with((
+            status::Ok,
+            format!(
+                "Created a new transaction: {:?}\n",
+                bc.current_transactions
+            ),
+        )))
+    }
+    fn chain(req: &mut Request) -> IronResult<Response> {
+        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let bc = arc_rw_lock.read().unwrap();
+        // TODO: Transform the blockchain to JSON.
+        Ok(Response::with((status::Ok, format!("{:?}\n", bc))))
+    }
 }
 
 #[derive(Debug)]
@@ -42,6 +92,10 @@ impl Default for Blockchain {
             current_transactions: Vec::new(),
         }
     }
+}
+
+impl Key for Blockchain {
+    type Value = Blockchain;
 }
 
 impl Blockchain {

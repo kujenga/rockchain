@@ -7,3 +7,6 @@ authors = ["kujenga <ataylor0123@gmail.com>"]
 chrono = "0.4"
 sha2 = "0.7"
 byteorder = "1"
+iron = "*"
+router = "*"
+persistent = "*"
