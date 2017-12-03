@@ -10,10 +10,7 @@ use sha2::{Sha256, Digest};
 use byteorder::{BigEndian, WriteBytesExt};
 
 fn main() {
-    let mut bc = Blockchain { ..Default::default() };
-
-    // genesis block
-    bc.new_block(100, Some(1));
+    let mut bc = new_blockchain();
 
     // new block
     bc.new_transaction("me", "you", 5);
@@ -28,6 +25,14 @@ fn main() {
 struct Blockchain {
     chain: Vec<Block>,
     current_transactions: Vec<Transaction>,
+}
+
+// Create an initialized blockchain.
+fn new_blockchain() -> Blockchain {
+    let mut bc = Blockchain { ..Default::default() };
+    // add genesis block
+    bc.new_block(100, Some(1));
+    bc
 }
 
 impl Default for Blockchain {
@@ -112,4 +117,24 @@ struct Transaction {
     sender: String,
     recipient: String,
     amount: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let mut bc = new_blockchain();
+        assert_eq!(bc.chain.len(), 1);
+
+        // new block
+        bc.new_transaction("me", "you", 5);
+        bc.new_transaction("you", "me", 2);
+        assert_eq!(bc.current_transactions.len(), 2);
+
+        let proof = Blockchain::proof_of_work(bc.last_block().proof);
+        bc.new_block(proof, None);
+        assert_eq!(bc.chain.len(), 2);
+    }
 }
