@@ -1,9 +1,11 @@
 extern crate chrono;
 extern crate sha2;
 extern crate byteorder;
+#[macro_use]
 extern crate iron;
 extern crate router;
 extern crate persistent;
+extern crate bodyparser;
 #[macro_use]
 extern crate serde_json;
 #[macro_use]
@@ -62,8 +64,13 @@ fn main() {
     fn transactions_new(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
         let mut bc = arc_rw_lock.write().unwrap();
-        // TODO: Extract these from the request.
-        bc.new_transaction("me", "you", 5);
+
+        // TODO: Provide better error responses here.
+        let json_body = iexpect!(itry!(req.get::<bodyparser::Json>()));
+        let sender = iexpect!(json_body["sender"].as_str());
+        let recipient = iexpect!(json_body["recipient"].as_str());
+        let amount = iexpect!(json_body["amount"].as_i64());
+        bc.new_transaction(sender, recipient, amount);
 
         let content_type = "application/json".parse::<Mime>().unwrap();
         let resp = json!({"current_transactions": bc.current_transactions});
