@@ -4,11 +4,16 @@ extern crate byteorder;
 extern crate iron;
 extern crate router;
 extern crate persistent;
+#[macro_use]
+extern crate serde_json;
+#[macro_use]
+extern crate serde_derive;
 
 use std::mem;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::RwLock;
+use std::ops::Deref;
 use chrono::prelude::*;
 use sha2::{Sha256, Digest};
 use byteorder::{BigEndian, WriteBytesExt};
@@ -17,8 +22,10 @@ use iron::status;
 use router::Router;
 use iron::typemap::Key;
 use persistent::State;
+use iron::mime::Mime;
 
 fn main() {
+
     let mut router = Router::new();
 
     router.get("/", index, "index");
@@ -43,10 +50,13 @@ fn main() {
         let mut bc = arc_rw_lock.write().unwrap();
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
         bc.new_block(proof, None);
-        // TODO: Transform the response to JSON.
+
+        let content_type = "application/json".parse::<Mime>().unwrap();
+        let resp = json!({"block":bc.last_block()});
         Ok(Response::with((
+            content_type,
             status::Ok,
-            format!("Mined a new block: {:?}\n", bc.last_block()),
+            serde_json::to_string(&resp).unwrap(),
         )))
     }
     fn transactions_new(req: &mut Request) -> IronResult<Response> {
@@ -54,24 +64,30 @@ fn main() {
         let mut bc = arc_rw_lock.write().unwrap();
         // TODO: Extract these from the request.
         bc.new_transaction("me", "you", 5);
-        // TODO: Transform the response to JSON.
+
+        let content_type = "application/json".parse::<Mime>().unwrap();
+        let resp = json!({"current_transactions": bc.current_transactions});
         Ok(Response::with((
+            content_type,
             status::Ok,
-            format!(
-                "Created a new transaction: {:?}\n",
-                bc.current_transactions
-            ),
+            serde_json::to_string(&resp).unwrap(),
         )))
     }
     fn chain(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
         let bc = arc_rw_lock.read().unwrap();
-        // TODO: Transform the blockchain to JSON.
-        Ok(Response::with((status::Ok, format!("{:?}\n", bc))))
+
+        let content_type = "application/json".parse::<Mime>().unwrap();
+        let resp = json!({"chain": bc.deref()});
+        Ok(Response::with((
+            content_type,
+            status::Ok,
+            serde_json::to_string(&resp).unwrap(),
+        )))
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Blockchain {
     chain: Vec<Block>,
     current_transactions: Vec<Transaction>,
@@ -157,7 +173,7 @@ impl Blockchain {
     }
 }
 
-#[derive(Hash, Debug)]
+#[derive(Hash, Debug, Serialize, Deserialize)]
 struct Block {
     index: usize,
     timestamp: DateTime<Utc>,
@@ -166,7 +182,7 @@ struct Block {
     previous_hash: u64,
 }
 
-#[derive(Hash, Debug)]
+#[derive(Hash, Debug, Serialize, Deserialize)]
 struct Transaction {
     sender: String,
     recipient: String,
