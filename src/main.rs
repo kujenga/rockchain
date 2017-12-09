@@ -66,11 +66,8 @@ fn main() {
         let mut bc = arc_rw_lock.write().unwrap();
 
         // TODO: Provide better error responses here.
-        let json_body = iexpect!(itry!(req.get::<bodyparser::Json>()));
-        let sender = iexpect!(json_body["sender"].as_str());
-        let recipient = iexpect!(json_body["recipient"].as_str());
-        let amount = iexpect!(json_body["amount"].as_i64());
-        bc.new_transaction(sender, recipient, amount);
+        let transaction = iexpect!(itry!(req.get::<bodyparser::Struct<Transaction>>()));
+        bc.new_transaction(transaction);
 
         let content_type = "application/json".parse::<Mime>().unwrap();
         let resp = json!({"current_transactions": bc.current_transactions});
@@ -141,13 +138,8 @@ impl Blockchain {
     }
 
     // Adds a new transaction to the list of transactions
-    fn new_transaction(&mut self, sender: &str, recipient: &str, amount: i64) -> usize {
-        self.current_transactions.push(Transaction {
-            sender: sender.to_owned(),
-            recipient: recipient.to_owned(),
-            amount: amount,
-        });
-
+    fn new_transaction(&mut self, transaction: Transaction) -> usize {
+        self.current_transactions.push(transaction);
         self.last_block().index + 1
     }
 
@@ -189,7 +181,7 @@ struct Block {
     previous_hash: u64,
 }
 
-#[derive(Hash, Debug, Serialize, Deserialize)]
+#[derive(Hash, Debug, Clone, Serialize, Deserialize)]
 struct Transaction {
     sender: String,
     recipient: String,
@@ -206,8 +198,16 @@ mod tests {
         assert_eq!(bc.chain.len(), 1);
 
         // new block
-        bc.new_transaction("me", "you", 5);
-        bc.new_transaction("you", "me", 2);
+        bc.new_transaction(Transaction {
+            sender: "me".to_owned(),
+            recipient: "you".to_owned(),
+            amount: 5,
+        });
+        bc.new_transaction(Transaction {
+            sender: "you".to_owned(),
+            recipient: "me".to_owned(),
+            amount: 2,
+        });
         assert_eq!(bc.current_transactions.len(), 2);
 
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
