@@ -4,6 +4,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate iron;
 extern crate router;
+extern crate logger;
 extern crate persistent;
 extern crate bodyparser;
 #[macro_use]
@@ -12,6 +13,7 @@ extern crate serde_json;
 extern crate serde_derive;
 
 use std::mem;
+use std::env;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::RwLock;
@@ -22,6 +24,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use iron::prelude::*;
 use iron::status;
 use router::Router;
+use logger::Logger;
 use iron::typemap::Key;
 use persistent::State;
 use iron::mime::Mime;
@@ -36,9 +39,14 @@ fn main() {
     router.get("/chain", chain, "chain");
 
     let mut c = Chain::new(router);
+    let (logger_before, logger_after) = Logger::new(None);
+    c.link_before(logger_before);
+    c.link_after(logger_after);
     c.link(State::<Blockchain>::both(RwLock::new(new_blockchain())));
 
-    Iron::new(c).http("localhost:3000").unwrap();
+    let port = env::var("PORT").unwrap_or("3000".to_owned());
+    let addr = format!("localhost:{}", port);
+    Iron::new(c).http(addr).unwrap();
 
     // handler definitions
 
