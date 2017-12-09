@@ -10,6 +10,8 @@ byteorder = "1"
 iron = "*"
 router = "*"
 logger = { git = "https://github.com/iron/logger.git" }
+log = "0.3"
+env_logger = "0.4"
 persistent = "*"
 serde = "1.0"
 serde_derive = "1.0"

@@ -5,6 +5,9 @@ extern crate byteorder;
 extern crate iron;
 extern crate router;
 extern crate logger;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 extern crate persistent;
 extern crate bodyparser;
 #[macro_use]
@@ -30,6 +33,7 @@ use persistent::State;
 use iron::mime::Mime;
 
 fn main() {
+    env_logger::init().unwrap();
 
     let mut router = Router::new();
 
@@ -46,6 +50,7 @@ fn main() {
 
     let port = env::var("PORT").unwrap_or("3000".to_owned());
     let addr = format!("localhost:{}", port);
+    info!("Starting server on {}", addr);
     Iron::new(c).http(addr).unwrap();
 
     // handler definitions
