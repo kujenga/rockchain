@@ -10,17 +10,23 @@ extern crate log;
 extern crate env_logger;
 extern crate persistent;
 extern crate bodyparser;
+extern crate url;
+extern crate serde;
+extern crate url_serde;
 #[macro_use]
 extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
+extern crate futures;
+extern crate hyper;
+extern crate tokio_core;
 
 use std::mem;
 use std::env;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::RwLock;
-use std::ops::Deref;
 use chrono::prelude::*;
 use sha2::{Sha256, Digest};
 use byteorder::{BigEndian, WriteBytesExt};
@@ -31,6 +37,10 @@ use logger::Logger;
 use iron::typemap::Key;
 use persistent::State;
 use iron::mime::Mime;
+use url::Url;
+use futures::{Future, Stream};
+use hyper::{Client, Chunk};
+use tokio_core::reactor::Core;
 
 fn main() {
     env_logger::init().unwrap();
@@ -41,6 +51,8 @@ fn main() {
     router.get("/mine", mine, "mine");
     router.post("/transactions/new", transactions_new, "transactions_new");
     router.get("/chain", chain, "chain");
+    router.post("/nodes/register", nodes_register, "nodes_register");
+    router.get("/nodes/resolve", nodes_resolve, "nodes_resolve");
 
     let mut c = Chain::new(router);
     let (logger_before, logger_after) = Logger::new(None);
@@ -63,6 +75,7 @@ fn main() {
     fn mine(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
         let mut bc = arc_rw_lock.write().unwrap();
+
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
         bc.new_block(proof, None);
 
@@ -95,7 +108,54 @@ fn main() {
         let bc = arc_rw_lock.read().unwrap();
 
         let content_type = "application/json".parse::<Mime>().unwrap();
-        let resp = json!({"chain": bc.deref()});
+        let resp = json!({"chain": bc.chain});
+        Ok(Response::with((
+            content_type,
+            status::Ok,
+            serde_json::to_string(&resp).unwrap(),
+        )))
+    }
+    fn nodes_register(req: &mut Request) -> IronResult<Response> {
+        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let mut bc = arc_rw_lock.write().unwrap();
+
+        // TODO: Provide better error responses here.
+        #[derive(Clone, Serialize, Deserialize)]
+        struct NodeRegisterReq {
+            nodes: Vec<Node>,
+        }
+        let node_req = iexpect!(itry!(req.get::<bodyparser::Struct<NodeRegisterReq>>()));
+
+        for node in node_req.nodes {
+            bc.register_node(node);
+        }
+
+        let content_type = "application/json".parse::<Mime>().unwrap();
+        let resp = json!({"message": "New nodes have been added","total_nodes": bc.nodes});
+        Ok(Response::with((
+            content_type,
+            status::Ok,
+            serde_json::to_string(&resp).unwrap(),
+        )))
+    }
+    fn nodes_resolve(req: &mut Request) -> IronResult<Response> {
+        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let mut bc = arc_rw_lock.write().unwrap();
+
+        let replaced = bc.resolve_conflicts();
+
+        let content_type = "application/json".parse::<Mime>().unwrap();
+        let resp = if replaced {
+            json!({
+                "message": "Our chain was replaced",
+                "new_chain": bc.chain,
+            })
+        } else {
+            json!({
+                "message": "Our chain is authoritative",
+                "chain": bc.chain,
+            })
+        };
         Ok(Response::with((
             content_type,
             status::Ok,
@@ -104,10 +164,11 @@ fn main() {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Blockchain {
     chain: Vec<Block>,
     current_transactions: Vec<Transaction>,
+    nodes: HashSet<Node>,
 }
 
 // Create an initialized blockchain.
@@ -123,6 +184,7 @@ impl Default for Blockchain {
         Blockchain {
             chain: Vec::new(),
             current_transactions: Vec::new(),
+            nodes: HashSet::new(),
         }
     }
 }
@@ -183,9 +245,76 @@ impl Blockchain {
         hasher.input(&wtr[..]);
         hasher.result()[..2] == b"00"[..2]
     }
+
+    // register a new node (idempotent)
+    fn register_node(&mut self, node: Node) {
+        self.nodes.insert(node);
+    }
+
+    // Consensus
+
+    // Determine if the passed in chain is valid.
+    fn valid_chain(chain: &Vec<Block>) -> bool {
+        for i in 1..chain.len() {
+            let last_block = &chain[i - 1];
+            let block = &chain[i];
+            println!("last_block: {:?}", last_block);
+            println!("block: {:?}", block);
+
+            // Check that the hash of the block is correct.
+            if block.previous_hash != Blockchain::hash(last_block) {
+                return false;
+            }
+
+            // Check that the Proof of Work is correct.
+            if !Blockchain::valid_proof(last_block.proof, block.proof) {
+                return false;
+            }
+        }
+        // If all checks pass, the chain is valid.
+        true
+    }
+    // Consensus algorithm, resolving conflicts by using the longest chain in
+    // the network. Performs network calls to all other known nodes.
+    fn resolve_conflicts(&mut self) -> bool {
+
+        let cur_len = self.chain.len();
+        let mut max_len = cur_len;
+
+        for node in self.nodes.iter() {
+            println!("calling node: {:?}", node);
+            let mut core = Core::new().unwrap();
+            let client = Client::new(&core.handle());
+            let mut target = node.address.to_owned();
+            target.set_path("/chain");
+            let work = client.get(target.into_string().parse().unwrap()).and_then(
+                |res| {
+                    res.body().concat2().and_then(move |body: Chunk| {
+                        #[derive(Debug, Clone, Serialize, Deserialize)]
+                        struct ChainResp {
+                            chain: Vec<Block>,
+                        }
+                        let v: ChainResp = serde_json::from_slice(&body).unwrap();
+                        Ok(v.chain)
+                    })
+                },
+            );
+            let chain = core.run(work).unwrap();
+            let new_len = chain.len();
+            if new_len > cur_len && Blockchain::valid_chain(&chain) {
+                debug!("Found a better chain of len {} from: {}", new_len, node.address);
+                max_len = new_len;
+                self.chain = chain;
+            }
+        }
+
+        info!("max_len: {}, cur_len: {}", max_len, cur_len);
+
+        max_len > cur_len
+    }
 }
 
-#[derive(Hash, Debug, Serialize, Deserialize)]
+#[derive(Hash, Debug, Clone, Serialize, Deserialize)]
 struct Block {
     index: usize,
     timestamp: DateTime<Utc>,
@@ -199,6 +328,12 @@ struct Transaction {
     sender: String,
     recipient: String,
     amount: i64,
+}
+
+#[derive(Hash, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+struct Node {
+    #[serde(with = "url_serde")]
+    address: Url,
 }
 
 #[cfg(test)]
@@ -226,5 +361,18 @@ mod tests {
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
         bc.new_block(proof, None);
         assert_eq!(bc.chain.len(), 2);
+    }
+
+    #[test]
+    fn consensus() {
+        let mut bc = new_blockchain();
+        assert!(Blockchain::valid_chain(&bc));
+
+        for _ in 0..2 {
+            let proof = Blockchain::proof_of_work(bc.last_block().proof);
+            bc.new_block(proof, None);
+
+            assert!(Blockchain::valid_chain(&bc));
+        }
     }
 }
