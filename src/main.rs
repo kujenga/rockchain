@@ -79,13 +79,9 @@ fn main() {
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
         bc.new_block(proof, None);
 
-        let content_type = "application/json".parse::<Mime>().unwrap();
-        let resp = json!({"block":bc.last_block()});
-        Ok(Response::with((
-            content_type,
-            status::Ok,
-            serde_json::to_string(&resp).unwrap(),
-        )))
+        respond_ok(json!({
+            "block":bc.last_block(),
+        }))
     }
     fn transactions_new(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
@@ -95,25 +91,17 @@ fn main() {
         let transaction = iexpect!(itry!(req.get::<bodyparser::Struct<Transaction>>()));
         bc.new_transaction(transaction);
 
-        let content_type = "application/json".parse::<Mime>().unwrap();
-        let resp = json!({"current_transactions": bc.current_transactions});
-        Ok(Response::with((
-            content_type,
-            status::Ok,
-            serde_json::to_string(&resp).unwrap(),
-        )))
+        respond_ok(json!({
+            "current_transactions": bc.current_transactions,
+        }))
     }
     fn chain(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
         let bc = arc_rw_lock.read().unwrap();
 
-        let content_type = "application/json".parse::<Mime>().unwrap();
-        let resp = json!({"chain": bc.chain});
-        Ok(Response::with((
-            content_type,
-            status::Ok,
-            serde_json::to_string(&resp).unwrap(),
-        )))
+        respond_ok(json!({
+            "chain": bc.chain,
+        }))
     }
     fn nodes_register(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
@@ -130,13 +118,10 @@ fn main() {
             bc.register_node(node);
         }
 
-        let content_type = "application/json".parse::<Mime>().unwrap();
-        let resp = json!({"message": "New nodes have been added","total_nodes": bc.nodes});
-        Ok(Response::with((
-            content_type,
-            status::Ok,
-            serde_json::to_string(&resp).unwrap(),
-        )))
+        respond_ok(json!({
+            "message": "New nodes have been added",
+            "total_nodes": bc.nodes,
+        }))
     }
     fn nodes_resolve(req: &mut Request) -> IronResult<Response> {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
@@ -144,25 +129,34 @@ fn main() {
 
         let replaced = bc.resolve_conflicts();
 
-        let content_type = "application/json".parse::<Mime>().unwrap();
-        let resp = if replaced {
-            json!({
-                "message": "Our chain was replaced",
-                "new_chain": bc.chain,
-            })
+        let msg = if replaced {
+            "Our chain was replaced"
         } else {
-            json!({
-                "message": "Our chain is authoritative",
-                "chain": bc.chain,
-            })
+            "Our chain is authoritative"
         };
-        Ok(Response::with((
-            content_type,
-            status::Ok,
-            serde_json::to_string(&resp).unwrap(),
-        )))
+        respond_ok(json!({
+            "message": msg,
+            "chain": bc.chain,
+            "replaced": replaced,
+        }))
     }
 }
+
+// Response helpers
+
+fn respond_ok<T: serde::Serialize>(data: T) -> IronResult<Response> {
+    let content_type = "application/json".parse::<Mime>().unwrap();
+    let json = match serde_json::to_string(&data) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("Unable to serialize response: {}", e);
+            return Err(IronError::new(e, status::InternalServerError));
+        }
+    };
+    Ok(Response::with((content_type, status::Ok, json)))
+}
+
+// Blockchain data types
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Blockchain {
@@ -335,6 +329,8 @@ struct Node {
     #[serde(with = "url_serde")]
     address: Url,
 }
+
+// Tests
 
 #[cfg(test)]
 mod tests {
