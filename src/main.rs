@@ -373,13 +373,13 @@ mod tests {
     #[test]
     fn consensus() {
         let mut bc = new_blockchain();
-        assert!(Blockchain::valid_chain(&bc));
+        assert!(Blockchain::valid_chain(&bc.chain));
 
         for _ in 0..2 {
             let proof = Blockchain::proof_of_work(bc.last_block().proof);
             bc.new_block(proof, None);
 
-            assert!(Blockchain::valid_chain(&bc));
+            assert!(Blockchain::valid_chain(&bc.chain));
         }
     }
 }
