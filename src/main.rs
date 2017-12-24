@@ -134,7 +134,7 @@ fn main() {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
         let mut bc = arc_rw_lock.write().unwrap();
 
-        let replaced = bc.resolve_conflicts();
+        let replaced = bc.resolve_conflicts()?;
 
         let msg = if replaced {
             "Our chain was replaced"
@@ -277,30 +277,33 @@ impl Blockchain {
     }
     // Consensus algorithm, resolving conflicts by using the longest chain in
     // the network. Performs network calls to all other known nodes.
-    fn resolve_conflicts(&mut self) -> bool {
+    fn resolve_conflicts(&mut self) -> IronResult<bool> {
 
         let cur_len = self.chain.len();
         let mut max_len = cur_len;
 
+        let mut core = itry!(Core::new());
+        let client = Client::new(&core.handle());
+
         for node in self.nodes.iter() {
-            println!("calling node: {:?}", node);
-            let mut core = Core::new().unwrap();
-            let client = Client::new(&core.handle());
+            info!("calling node: {:?}", node);
+
             let mut target = node.address.to_owned();
             target.set_path("/chain");
-            let work = client.get(target.into_string().parse().unwrap()).and_then(
-                |res| {
-                    res.body().concat2().and_then(move |body: Chunk| {
-                        #[derive(Debug, Clone, Serialize, Deserialize)]
-                        struct ChainResp {
-                            chain: Vec<Block>,
-                        }
-                        let v: ChainResp = serde_json::from_slice(&body).unwrap();
-                        Ok(v.chain)
-                    })
-                },
-            );
-            let chain = core.run(work).unwrap();
+            let uri = itry!(target.into_string().parse());
+
+            let work = client.get(uri).and_then(|res| {
+                res.body().concat2().and_then(move |body: Chunk| {
+                    #[derive(Debug, Clone, Serialize, Deserialize)]
+                    struct ChainResp {
+                        chain: Vec<Block>,
+                    }
+                    // Error handling for passing is handled later.
+                    Ok(serde_json::from_slice::<ChainResp>(&body))
+                })
+            });
+
+            let chain = itry!(itry!(core.run(work))).chain;
             let new_len = chain.len();
             if new_len > cur_len && Blockchain::valid_chain(&chain) {
                 debug!("Found a better chain of len {} from: {}", new_len, node.address);
@@ -311,7 +314,7 @@ impl Blockchain {
 
         info!("max_len: {}, cur_len: {}", max_len, cur_len);
 
-        max_len > cur_len
+        Ok(max_len > cur_len)
     }
 }
 
