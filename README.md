@@ -15,5 +15,6 @@ The `PORT` environment variable can be used to set a custom port number.
 ## Status
 
 - [x] Building a Blockchain
-- [ ] Blockchain API
-- [ ] Distributed Consensus
+- [x] Blockchain API
+- [x] Distributed Consensus
+- [ ] Idiomatic error handling
