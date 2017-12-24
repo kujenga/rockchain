@@ -75,7 +75,7 @@ fn main() {
         ))
     }
     fn mine(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
         let mut bc = arc_rw_lock.write().unwrap();
 
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
@@ -86,7 +86,7 @@ fn main() {
         }))
     }
     fn transactions_new(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
         let mut bc = arc_rw_lock.write().unwrap();
 
         let transaction = iexpect!(itry!(
@@ -100,7 +100,7 @@ fn main() {
         }))
     }
     fn chain(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
         let bc = arc_rw_lock.read().unwrap();
 
         respond_ok(json!({
@@ -108,7 +108,7 @@ fn main() {
         }))
     }
     fn nodes_register(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
         let mut bc = arc_rw_lock.write().unwrap();
 
         // TODO: Provide better error responses here.
@@ -131,7 +131,7 @@ fn main() {
         }))
     }
     fn nodes_resolve(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
+        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
         let mut bc = arc_rw_lock.write().unwrap();
 
         let replaced = bc.resolve_conflicts()?;
@@ -150,6 +150,7 @@ fn main() {
 }
 
 // Handler helpers
+
 
 fn respond_ok<T: serde::Serialize>(data: T) -> IronResult<Response> {
     let content_type = "application/json".parse::<Mime>().unwrap();
