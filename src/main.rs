@@ -62,8 +62,10 @@ fn main() {
 
     let port = env::var("PORT").unwrap_or("3000".to_owned());
     let addr = format!("localhost:{}", port);
-    info!("Starting server on {}", addr);
-    Iron::new(c).http(addr).unwrap();
+    match Iron::new(c).http(addr) {
+        Ok(listening) => info!("Started server: {:?}", listening),
+        Err(err) => panic!("Unable to start server: {:?}", err),
+    };
 
     // handler definitions
 
@@ -87,8 +89,10 @@ fn main() {
         let arc_rw_lock = req.get::<State<Blockchain>>().unwrap();
         let mut bc = arc_rw_lock.write().unwrap();
 
-        // TODO: Provide better error responses here.
-        let transaction = iexpect!(itry!(req.get::<bodyparser::Struct<Transaction>>()));
+        let transaction = iexpect!(itry!(
+            req.get::<bodyparser::Struct<Transaction>>(),
+            status::BadRequest
+        ));
         bc.new_transaction(transaction);
 
         respond_ok(json!({
@@ -112,7 +116,10 @@ fn main() {
         struct NodeRegisterReq {
             nodes: Vec<Node>,
         }
-        let node_req = iexpect!(itry!(req.get::<bodyparser::Struct<NodeRegisterReq>>()));
+        let node_req = iexpect!(itry!(
+            req.get::<bodyparser::Struct<NodeRegisterReq>>(),
+            (status::BadRequest, "Invalid JSON")
+        ));
 
         for node in node_req.nodes {
             bc.register_node(node);
@@ -142,7 +149,7 @@ fn main() {
     }
 }
 
-// Response helpers
+// Handler helpers
 
 fn respond_ok<T: serde::Serialize>(data: T) -> IronResult<Response> {
     let content_type = "application/json".parse::<Mime>().unwrap();
