@@ -25,11 +25,12 @@ use std::env;
 use std::sync::RwLock;
 use iron::prelude::*;
 use iron::status;
+use iron::typemap::Key;
 use router::Router;
 use logger::Logger;
 use persistent::State;
 use iron::mime::Mime;
-// chain
+// Neighboring chain module.
 use chain::{new_blockchain, Blockchain, Transaction, Node};
 
 fn main() {
@@ -155,6 +156,10 @@ fn respond_ok<T: serde::Serialize>(data: T) -> IronResult<Response> {
 }
 
 mod chain;
+
+impl Key for Blockchain {
+    type Value = Blockchain;
+}
 
 // Tests
 

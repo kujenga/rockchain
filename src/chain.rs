@@ -1,20 +1,5 @@
-extern crate chrono;
-extern crate sha2;
-extern crate byteorder;
-extern crate iron;
-extern crate router;
-extern crate logger;
-extern crate log;
-extern crate env_logger;
-extern crate persistent;
-extern crate bodyparser;
-extern crate url;
-extern crate serde;
 extern crate url_serde;
 extern crate serde_json;
-extern crate futures;
-extern crate hyper;
-extern crate tokio_core;
 
 use std::mem;
 use std::collections::hash_map::DefaultHasher;
@@ -23,14 +8,16 @@ use std::hash::{Hash, Hasher};
 use chrono::prelude::*;
 use sha2::{Sha256, Digest};
 use byteorder::{BigEndian, WriteBytesExt};
-use iron::prelude::*;
-use iron::typemap::Key;
 use url::Url;
 use futures::{Future, Stream};
 use hyper::{Client, Chunk};
 use tokio_core::reactor::Core;
+// TODO: Remove iron from this module.
+use iron::IronResult;
+
 //
 // Blockchain data types
+//
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blockchain {
@@ -55,10 +42,6 @@ impl Default for Blockchain {
             nodes: HashSet::new(),
         }
     }
-}
-
-impl Key for Blockchain {
-    type Value = Blockchain;
 }
 
 impl Blockchain {
