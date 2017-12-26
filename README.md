@@ -81,5 +81,6 @@ curl http://localhost:3001/nodes/resolve | jq
 - [x] Blockchain API
 - [x] Distributed Consensus
 - [x] More idiomatic error handling
+- [x] Refactor blockchain and server into separate modules
 - [ ] Auto-register peers using CLI args
-- [ ] Refactor blockchain and server into separate modules
+- [ ] Move blockchain data types into library crate
