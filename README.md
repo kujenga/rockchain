@@ -1,6 +1,7 @@
 # Blockchain
 
 [![Build Status](https://travis-ci.org/kujenga/blockchain.svg?branch=master)](https://travis-ci.org/kujenga/blockchain)
+[![Build Status](https://ci.appveyor.com/api/projects/status/ynq3ue8i6mfokljy?svg=true)](https://ci.appveyor.com/project/kujenga/blockchain)
 
 This project is aimed at furthering my personal understanding of Rust. The
 Blockchain implementation is based on the following walkthrough, which was
