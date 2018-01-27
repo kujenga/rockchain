@@ -1,10 +1,12 @@
-# Blockchain
+# Rockchain
 
 [![Build Status](https://travis-ci.org/kujenga/blockchain.svg?branch=master)](https://travis-ci.org/kujenga/blockchain)
 [![Build Status](https://ci.appveyor.com/api/projects/status/ynq3ue8i6mfokljy?svg=true)](https://ci.appveyor.com/project/kujenga/blockchain)
 
+A blockchain written in Rust.
+
 This project is aimed at furthering my personal understanding of Rust. The
-Blockchain implementation is based on the following walkthrough, which was
+blockchain implementation is based on the following walkthrough, which was
 originally done in Python:
 
 https://hackernoon.com/learn-blockchains-by-building-one-117428612f46
