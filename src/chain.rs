@@ -3,16 +3,14 @@ extern crate serde_json;
 extern crate url_serde;
 
 use byteorder::{BigEndian, WriteBytesExt};
-use chrono::prelude::*;
-use futures::{Future, Stream};
-use hyper::{Chunk, Client};
+use chrono::prelude::{DateTime, Utc};
+use hyper::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::mem;
-use tokio_core::reactor::Core;
 use url::Url;
 
 //
@@ -123,12 +121,11 @@ impl Blockchain {
     }
     // Consensus algorithm, resolving conflicts by using the longest chain in
     // the network. Performs network calls to all other known nodes.
-    pub fn resolve_conflicts(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn resolve_conflicts(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
         let cur_len = self.chain.len();
         let mut max_len = cur_len;
 
-        let mut core = Core::new()?;
-        let client = Client::new(&core.handle());
+        let client = Client::new();
 
         for node in self.nodes.iter() {
             info!("calling node: {:?}", node);
@@ -137,18 +134,10 @@ impl Blockchain {
             target.set_path("/chain");
             let uri = target.into_string().parse()?;
 
-            let work = client.get(uri).and_then(|res| {
-                res.body().concat2().and_then(move |body: Chunk| {
-                    #[derive(Debug, Clone, Serialize, Deserialize)]
-                    struct ChainResp {
-                        chain: Vec<Block>,
-                    }
-                    // Error handling for passing is handled later.
-                    Ok(serde_json::from_slice::<ChainResp>(&body))
-                })
-            });
+            let res = client.get(uri).await?;
+            let buf = hyper::body::to_bytes(res).await?;
+            let chain = serde_json::from_slice::<ChainResp>(&buf)?.chain;
 
-            let chain = core.run(work)??.chain;
             let new_len = chain.len();
             if new_len > cur_len && Blockchain::valid_chain(&chain) {
                 debug!(
@@ -166,6 +155,11 @@ impl Blockchain {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChainResp {
+    chain: Vec<Block>,
+}
+
 #[derive(Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     index: usize,
@@ -180,6 +174,11 @@ pub struct Transaction {
     pub sender: String,
     pub recipient: String,
     pub amount: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct NodeRegisterReq {
+    pub nodes: Vec<Node>,
 }
 
 #[derive(Hash, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]

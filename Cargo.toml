@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 axum = "0.5"
+"axum-macros" = "*"
 http = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -13,17 +14,13 @@ tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.3", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 sha2 = "0.7"
+bytes = "1"
 byteorder = "1"
-logger = { git = "https://github.com/iron/logger.git" }
 log = "0.3"
-env_logger = "0.4"
-persistent = "*"
 url = "1.6"
 serde_json = "1.0"
 url_serde = "0.2"
-bodyparser = { git = "https://github.com/iron/body-parser.git" }
-futures = "0.1"
-hyper = "0.11"
-tokio-core = "0.1"
+futures = "0.3"
+hyper = { version = "0.14", features = ["client"] }

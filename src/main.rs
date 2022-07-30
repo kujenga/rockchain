@@ -1,16 +1,13 @@
 extern crate axum;
-extern crate bodyparser;
+extern crate axum_macros;
 extern crate byteorder;
+extern crate bytes;
 extern crate chrono;
-extern crate env_logger;
 extern crate futures;
 extern crate http;
 extern crate hyper;
-extern crate logger;
-extern crate persistent;
 extern crate serde;
 extern crate sha2;
-extern crate tokio_core;
 extern crate tracing;
 extern crate url;
 extern crate url_serde;
@@ -28,18 +25,13 @@ use axum::{
     routing::{get, post},
     BoxError, Router,
 };
-use serde::{Deserialize, Serialize};
+use futures::lock::Mutex;
 use serde_json::{json, Value};
-use std::{
-    env,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use tower::ServiceBuilder;
 use tower_http::{trace::TraceLayer, ServiceBuilderExt};
 // Neighboring chain module.
-use chain::{Blockchain, Node, Transaction};
+use chain::{Blockchain, NodeRegisterReq, Transaction};
 
 async fn handle_errors(err: BoxError) -> impl IntoResponse {
     if err.is::<tower::timeout::error::Elapsed>() {
@@ -55,7 +47,7 @@ async fn handle_errors(err: BoxError) -> impl IntoResponse {
     }
 }
 
-type SharedState = Arc<RwLock<Blockchain>>;
+type SharedState = Arc<Mutex<Blockchain>>;
 
 #[tokio::main]
 async fn main() {
@@ -109,11 +101,13 @@ async fn main() {
 
     // handler definitions
 
+    #[axum_macros::debug_handler]
     async fn index() -> String {
         "Welcome to the Blockchain server!\n".to_string()
     }
+    #[axum_macros::debug_handler]
     async fn mine(Extension(state): Extension<SharedState>) -> Json<Value> {
-        let mut bc = state.write().unwrap();
+        let mut bc = state.lock().await;
 
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
         bc.new_block(proof, None);
@@ -122,11 +116,12 @@ async fn main() {
             "block":bc.last_block(),
         }))
     }
+    #[axum_macros::debug_handler]
     async fn transactions_new(
         Extension(state): Extension<SharedState>,
         Json(transaction): Json<Transaction>,
     ) -> Json<Value> {
-        let mut bc = state.write().unwrap();
+        let mut bc = state.lock().await;
 
         bc.new_transaction(transaction);
 
@@ -135,17 +130,18 @@ async fn main() {
         }))
     }
     async fn chain(Extension(state): Extension<SharedState>) -> Json<Value> {
-        let bc = state.read().unwrap();
+        let bc = state.lock().await;
 
         Json(json!({
             "chain": bc.chain,
         }))
     }
+    #[axum_macros::debug_handler]
     async fn nodes_register(
         Extension(state): Extension<SharedState>,
         Json(node_req): Json<NodeRegisterReq>,
     ) -> Json<Value> {
-        let mut bc = state.write().unwrap();
+        let mut bc = state.lock().await;
 
         for node in node_req.nodes {
             bc.register_node(node);
@@ -156,13 +152,13 @@ async fn main() {
             "total_nodes": bc.nodes,
         }))
     }
+    #[axum_macros::debug_handler]
     async fn nodes_resolve(
         Extension(state): Extension<SharedState>,
     ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-        // ) -> Result<Json<Value>, StatusCode> {
-        let mut bc = state.write().unwrap();
+        let mut bc = state.lock().await;
 
-        let replaced = match bc.resolve_conflicts() {
+        let replaced = match bc.resolve_conflicts().await {
             Ok(r) => r,
             Err(e) => {
                 return Err((
@@ -183,11 +179,6 @@ async fn main() {
             "replaced": replaced,
         })))
     }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct NodeRegisterReq {
-    nodes: Vec<Node>,
 }
 
 // Tests
