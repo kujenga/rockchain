@@ -1,6 +1,6 @@
 # Rockchain
 
-[![Build Status](https://travis-ci.org/kujenga/blockchain.svg?branch=master)](https://travis-ci.org/kujenga/blockchain)
+[![Build Status](https://github.com/kujenga/rockchain/actions/workflows/rust.yml/badge.svg)](https://github.com/kujenga/rockchain/actions)
 [![Build Status](https://ci.appveyor.com/api/projects/status/ynq3ue8i6mfokljy?svg=true)](https://ci.appveyor.com/project/kujenga/blockchain)
 
 A blockchain written in Rust.
