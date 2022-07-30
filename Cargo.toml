@@ -1,21 +1,26 @@
 [package]
 name = "rockchain"
 version = "0.1.0"
-authors = ["kujenga <ataylor0123@gmail.com>"]
+authors = ["kujenga <git@ataylor.io>"]
+edition = "2021"
 
 [dependencies]
+axum = "0.5"
+http = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.3", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.7"
 byteorder = "1"
-iron = "*"
-router = "*"
 logger = { git = "https://github.com/iron/logger.git" }
 log = "0.3"
 env_logger = "0.4"
 persistent = "*"
 url = "1.6"
-serde = "1.0"
-serde_derive = "1.0"
 serde_json = "1.0"
 url_serde = "0.2"
 bodyparser = { git = "https://github.com/iron/body-parser.git" }
