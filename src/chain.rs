@@ -1,19 +1,17 @@
-extern crate url_serde;
+extern crate serde;
 extern crate serde_json;
+extern crate url_serde;
 
-use std::mem;
+use byteorder::{BigEndian, WriteBytesExt};
+use chrono::prelude::{DateTime, Utc};
+use hyper::Client;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use chrono::prelude::*;
-use sha2::{Sha256, Digest};
-use byteorder::{BigEndian, WriteBytesExt};
+use std::mem;
 use url::Url;
-use futures::{Future, Stream};
-use hyper::{Client, Chunk};
-use tokio_core::reactor::Core;
-// TODO: Remove iron from this module.
-use iron::IronResult;
 
 //
 // Blockchain data types
@@ -26,21 +24,17 @@ pub struct Blockchain {
     pub nodes: HashSet<Node>,
 }
 
-// Create an initialized blockchain.
-pub fn new_blockchain() -> Blockchain {
-    let mut bc = Blockchain { ..Default::default() };
-    // add genesis block
-    bc.new_block(100, Some(1));
-    bc
-}
-
 impl Default for Blockchain {
+    // Create an initialized blockchain.
     fn default() -> Blockchain {
-        Blockchain {
+        let mut bc = Blockchain {
             chain: Vec::new(),
             current_transactions: Vec::new(),
             nodes: HashSet::new(),
-        }
+        };
+        // add genesis block
+        bc.new_block(100, Some(1));
+        bc
     }
 }
 
@@ -127,36 +121,29 @@ impl Blockchain {
     }
     // Consensus algorithm, resolving conflicts by using the longest chain in
     // the network. Performs network calls to all other known nodes.
-    pub fn resolve_conflicts(&mut self) -> IronResult<bool> {
-
+    pub async fn resolve_conflicts(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
         let cur_len = self.chain.len();
         let mut max_len = cur_len;
 
-        let mut core = itry!(Core::new());
-        let client = Client::new(&core.handle());
+        let client = Client::new();
 
         for node in self.nodes.iter() {
             info!("calling node: {:?}", node);
 
             let mut target = node.address.to_owned();
             target.set_path("/chain");
-            let uri = itry!(target.into_string().parse());
+            let uri = target.into_string().parse()?;
 
-            let work = client.get(uri).and_then(|res| {
-                res.body().concat2().and_then(move |body: Chunk| {
-                    #[derive(Debug, Clone, Serialize, Deserialize)]
-                    struct ChainResp {
-                        chain: Vec<Block>,
-                    }
-                    // Error handling for passing is handled later.
-                    Ok(serde_json::from_slice::<ChainResp>(&body))
-                })
-            });
+            let res = client.get(uri).await?;
+            let buf = hyper::body::to_bytes(res).await?;
+            let chain = serde_json::from_slice::<ChainResp>(&buf)?.chain;
 
-            let chain = itry!(itry!(core.run(work))).chain;
             let new_len = chain.len();
             if new_len > cur_len && Blockchain::valid_chain(&chain) {
-                debug!("Found a better chain of len {} from: {}", new_len, node.address);
+                debug!(
+                    "Found a better chain of len {} from: {}",
+                    new_len, node.address
+                );
                 max_len = new_len;
                 self.chain = chain;
             }
@@ -166,6 +153,11 @@ impl Blockchain {
 
         Ok(max_len > cur_len)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChainResp {
+    chain: Vec<Block>,
 }
 
 #[derive(Hash, Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +174,11 @@ pub struct Transaction {
     pub sender: String,
     pub recipient: String,
     pub amount: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct NodeRegisterReq {
+    pub nodes: Vec<Node>,
 }
 
 #[derive(Hash, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]

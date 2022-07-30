@@ -1,164 +1,184 @@
-extern crate chrono;
-extern crate sha2;
+extern crate axum;
+extern crate axum_macros;
 extern crate byteorder;
-#[macro_use]
-extern crate iron;
-extern crate router;
-extern crate logger;
-#[macro_use]
-extern crate log;
-extern crate env_logger;
-extern crate persistent;
-extern crate bodyparser;
-extern crate url;
+extern crate bytes;
+extern crate chrono;
+extern crate futures;
+extern crate http;
+extern crate hyper;
 extern crate serde;
+extern crate sha2;
+extern crate tracing;
+extern crate url;
 extern crate url_serde;
 #[macro_use]
+extern crate log;
 extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
-extern crate futures;
-extern crate hyper;
-extern crate tokio_core;
 
-use std::env;
-use std::sync::RwLock;
-use iron::prelude::*;
-use iron::status;
-use iron::typemap::Key;
-use router::Router;
-use logger::Logger;
-use persistent::State;
-use iron::mime::Mime;
+mod chain;
+
+use axum::{
+    error_handling::HandleErrorLayer,
+    extract::Extension,
+    http::{header, HeaderValue, StatusCode},
+    response::{IntoResponse, Json},
+    routing::{get, post},
+    BoxError, Router,
+};
+use futures::lock::Mutex;
+use serde_json::{json, Value};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use tower::ServiceBuilder;
+use tower_http::{trace::TraceLayer, ServiceBuilderExt};
 // Neighboring chain module.
-use chain::{new_blockchain, Blockchain, Transaction, Node};
+use chain::{Blockchain, NodeRegisterReq, Transaction};
 
-fn main() {
-    env_logger::init().unwrap();
+async fn handle_errors(err: BoxError) -> impl IntoResponse {
+    if err.is::<tower::timeout::error::Elapsed>() {
+        (
+            StatusCode::REQUEST_TIMEOUT,
+            "Request took too long".to_string(),
+        )
+    } else {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Unhandled internal error: {}", err),
+        )
+    }
+}
 
-    let mut router = Router::new();
+type SharedState = Arc<Mutex<Blockchain>>;
 
-    router.get("/", index, "index");
-    router.get("/mine", mine, "mine");
-    router.post("/transactions/new", transactions_new, "transactions_new");
-    router.get("/chain", chain, "chain");
-    router.post("/nodes/register", nodes_register, "nodes_register");
-    router.get("/nodes/resolve", nodes_resolve, "nodes_resolve");
+#[tokio::main]
+async fn main() {
+    // Setup tracing
+    tracing_subscriber::fmt::init();
 
-    let mut c = Chain::new(router);
-    let (logger_before, logger_after) = Logger::new(None);
-    c.link_before(logger_before);
-    c.link_after(logger_after);
-    c.link(State::<Blockchain>::both(RwLock::new(new_blockchain())));
+    // Setup state
+    // c.link(State::<Blockchain>::both(RwLock::new(new_blockchain())));
+    let state: SharedState = SharedState::default();
 
-    let port = env::var("PORT").unwrap_or("3000".to_owned());
-    let addr = format!("localhost:{}", port);
-    match Iron::new(c).http(addr) {
-        Ok(listening) => info!("Started server: {:?}", listening),
-        Err(err) => panic!("Unable to start server: {:?}", err),
-    };
+    // Build our middleware stack
+    // ref: https://github.com/tower-rs/tower-http/blob/master/examples/axum-key-value-store/src/main.rs
+    let middleware = ServiceBuilder::new()
+        // Add high level tracing/logging to all requests
+        .layer(TraceLayer::new_for_http())
+        // Handle errors
+        .layer(HandleErrorLayer::new(handle_errors))
+        // Set a timeout
+        .timeout(Duration::from_secs(10))
+        // Share the state with each handler via a request extension
+        .add_extension(state)
+        // Compress responses
+        .compression()
+        // Set a `Content-Type` if there isn't one already.
+        .insert_response_header_if_not_present(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/mine", get(mine))
+        .route("/transactions/new", post(transactions_new))
+        .route("/chain", get(chain))
+        .route("/nodes/register", post(nodes_register))
+        .route("/nodes/resolve", get(nodes_resolve))
+        .layer(middleware.into_inner());
+
+    // run our app with hyper
+    // `axum::Server` is a re-export of `hyper::Server`
+    let port = env::var("PORT")
+        .unwrap_or("3000".to_owned())
+        .parse::<u16>()
+        .unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    tracing::debug!("listening on {}", addr);
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 
     // handler definitions
 
-    fn index(_: &mut Request) -> IronResult<Response> {
-        Ok(Response::with(
-            (status::Ok, "Welcome to the Blockchain server!\n"),
-        ))
+    #[axum_macros::debug_handler]
+    async fn index() -> String {
+        "Welcome to the Blockchain server!\n".to_string()
     }
-    fn mine(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
-        let mut bc = arc_rw_lock.write().unwrap();
+    #[axum_macros::debug_handler]
+    async fn mine(Extension(state): Extension<SharedState>) -> Json<Value> {
+        let mut bc = state.lock().await;
 
         let proof = Blockchain::proof_of_work(bc.last_block().proof);
         bc.new_block(proof, None);
 
-        respond_ok(json!({
+        Json(json!({
             "block":bc.last_block(),
         }))
     }
-    fn transactions_new(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
-        let mut bc = arc_rw_lock.write().unwrap();
+    #[axum_macros::debug_handler]
+    async fn transactions_new(
+        Extension(state): Extension<SharedState>,
+        Json(transaction): Json<Transaction>,
+    ) -> Json<Value> {
+        let mut bc = state.lock().await;
 
-        let transaction = iexpect!(itry!(
-            req.get::<bodyparser::Struct<Transaction>>(),
-            status::BadRequest
-        ));
         bc.new_transaction(transaction);
 
-        respond_ok(json!({
+        Json(json!({
             "current_transactions": bc.current_transactions,
         }))
     }
-    fn chain(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
-        let bc = arc_rw_lock.read().unwrap();
+    async fn chain(Extension(state): Extension<SharedState>) -> Json<Value> {
+        let bc = state.lock().await;
 
-        respond_ok(json!({
+        Json(json!({
             "chain": bc.chain,
         }))
     }
-    fn nodes_register(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
-        let mut bc = arc_rw_lock.write().unwrap();
-
-        // TODO: Provide better error responses here.
-        #[derive(Clone, Serialize, Deserialize)]
-        struct NodeRegisterReq {
-            nodes: Vec<Node>,
-        }
-        let node_req = iexpect!(itry!(
-            req.get::<bodyparser::Struct<NodeRegisterReq>>(),
-            (status::BadRequest, "Invalid JSON")
-        ));
+    #[axum_macros::debug_handler]
+    async fn nodes_register(
+        Extension(state): Extension<SharedState>,
+        Json(node_req): Json<NodeRegisterReq>,
+    ) -> Json<Value> {
+        let mut bc = state.lock().await;
 
         for node in node_req.nodes {
             bc.register_node(node);
         }
 
-        respond_ok(json!({
+        Json(json!({
             "message": "New nodes have been added",
             "total_nodes": bc.nodes,
         }))
     }
-    fn nodes_resolve(req: &mut Request) -> IronResult<Response> {
-        let arc_rw_lock = itry!(req.get::<State<Blockchain>>());
-        let mut bc = arc_rw_lock.write().unwrap();
+    #[axum_macros::debug_handler]
+    async fn nodes_resolve(
+        Extension(state): Extension<SharedState>,
+    ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+        let mut bc = state.lock().await;
 
-        let replaced = bc.resolve_conflicts()?;
+        let replaced = match bc.resolve_conflicts().await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e.to_string()})),
+                ))
+            }
+        };
 
         let msg = if replaced {
             "Our chain was replaced"
         } else {
             "Our chain is authoritative"
         };
-        respond_ok(json!({
+        Ok(Json(json!({
             "message": msg,
             "chain": bc.chain,
             "replaced": replaced,
-        }))
+        })))
     }
-}
-
-// Handler helpers
-
-
-fn respond_ok<T: serde::Serialize>(data: T) -> IronResult<Response> {
-    let content_type = "application/json".parse::<Mime>().unwrap();
-    let json = match serde_json::to_string(&data) {
-        Ok(json) => json,
-        Err(e) => {
-            error!("Unable to serialize response: {}", e);
-            return Err(IronError::new(e, status::InternalServerError));
-        }
-    };
-    Ok(Response::with((content_type, status::Ok, json)))
-}
-
-mod chain;
-
-impl Key for Blockchain {
-    type Value = Blockchain;
 }
 
 // Tests
@@ -169,7 +189,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut bc = new_blockchain();
+        let mut bc = Blockchain::default();
         assert_eq!(bc.chain.len(), 1);
 
         // new block
@@ -192,7 +212,7 @@ mod tests {
 
     #[test]
     fn consensus() {
-        let mut bc = new_blockchain();
+        let mut bc = Blockchain::default();
         assert!(Blockchain::valid_chain(&bc.chain));
 
         for _ in 0..2 {
