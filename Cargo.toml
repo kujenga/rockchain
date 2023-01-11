@@ -9,7 +9,7 @@ axum = "0.5"
 "axum-macros" = "*"
 http = "0.2"
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.23", features = ["full"] }
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.3", features = ["full"] }
 tracing = "0.1"
